@@ -1,0 +1,6 @@
+1. ~~~~                           → Invalid Base64URL format
+2. IA                             → Decoded instruction is empty  
+3. SGVsbG8gV29ybGQ                → No cipher text found
+4. dGVzdCAifn5-fiIgc2hpZnQ9Mw     → Invalid cipher Base64URL
+5. dGVzdCAiICAiIHNoaWZ0PTM        → Decoded cipher text is empty
+6. dGVzdCAiZVhodlptUngiIG5vc2hpZnQ → No shift value found

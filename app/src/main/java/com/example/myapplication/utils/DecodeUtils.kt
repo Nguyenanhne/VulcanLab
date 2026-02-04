@@ -3,6 +3,12 @@ package com.example.myapplication.utils
 import android.util.Base64
 
 fun decodeBase64Url(input: String): String {
+    // Validate Base64URL characters: A-Z, a-z, 0-9, -, _
+    val base64UrlPattern = "^[A-Za-z0-9\\-_]*$".toRegex()
+    if (!base64UrlPattern.matches(input)) {
+        throw IllegalArgumentException("Invalid Base64URL characters in input")
+    }
+
     val paddedInput = when (input.length % 4) {
         2 -> "$input=="
         3 -> "$input="
