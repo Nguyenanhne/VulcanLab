@@ -1,4 +1,4 @@
-   package com.example.myapplication.ui.screens
+package com.example.myapplication.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -11,12 +11,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -24,82 +26,53 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myapplication.ui.components.DecodeStepCard
 import com.example.myapplication.ui.components.FinalKeyCard
-import com.example.myapplication.utils.caesarDecode
-import com.example.myapplication.utils.decodeBase64Url
-import com.example.myapplication.utils.extractCipherText
-import com.example.myapplication.utils.extractShift
 
+/**
+ * DoubleDecodeScreen – sử dụng ViewModel + StateFlow + SharedFlow
+ *
+ * ┌─────────────────────────────────────────────────────┐
+ * │  StateFlow  → giữ UI state (input, result, error)   │
+ * │  SharedFlow → one-time events (Toast, Snackbar...)  │
+ * └─────────────────────────────────────────────────────┘
+ *
+ * collectAsState()  → subscribe StateFlow, tự recompose khi state thay đổi
+ * LaunchedEffect    → collect SharedFlow để xử lý event 1 lần (Snackbar)
+ */
 @Preview(showBackground = true)
 @Composable
-fun DoubleDecodeScreen() {
-    var input by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf("") }
-    var instruction by remember { mutableStateOf("") }
-    var cipherTextBase64 by remember { mutableStateOf("") }
-    var cipherText by remember { mutableStateOf("") }
-    var shift by remember { mutableStateOf<Int?>(null) }
-    var finalKey by remember { mutableStateOf("") }
+fun DoubleDecodeScreen(
+    // viewModel() tự tạo hoặc lấy lại ViewModel đã có trong scope
+    viewModel: DoubleDecodeViewModel = viewModel()
+) {
+    // --- Collect StateFlow thành Compose State ---
+    // collectAsState() subscribe uiState; mỗi khi ViewModel gọi _uiState.update { }
+    // Compose sẽ tự recompose mà không cần remember/mutableStateOf thủ công
+    val uiState by viewModel.uiState.collectAsState()
 
-    fun processInput(newInput: String) {
-        input = newInput
-        errorMessage = ""
-        instruction = ""
-        cipherTextBase64 = ""
-        cipherText = ""
-        shift = null
-        finalKey = ""
+    // SnackbarHostState để hiển thị Snackbar từ SharedFlow event
+    val snackbarHostState = remember { SnackbarHostState() }
 
-        if (newInput.isBlank()) {
-            return
-        }
+    // --- Collect SharedFlow (One-time Events) ---
+    // LaunchedEffect chạy coroutine trong Compose lifecycle
+    // events.collect sẽ nhận từng event DoubleDecodeEvent một lần duy nhất
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is DoubleDecodeEvent.DecodeSuccess ->
+                    snackbarHostState.showSnackbar("✅ Key tìm được: ${event.key}")
 
-        try {
-            instruction = decodeBase64Url(newInput)
-        } catch (e: Exception) {
-            errorMessage = "Failed: Invalid Base64URL format - Cannot decode input string"
-            return
-        }
+                is DoubleDecodeEvent.DecodeFailure ->
+                    snackbarHostState.showSnackbar("❌ ${event.reason}")
 
-        if (instruction.isBlank()) {
-            errorMessage = "Failed: Decoded instruction is empty"
-            return
-        }
+                is DoubleDecodeEvent.InputCleared ->
+                    snackbarHostState.showSnackbar("Input đã được xoá")
 
-        cipherTextBase64 = extractCipherText(instruction) ?: ""
-        if (cipherTextBase64.isEmpty()) {
-            errorMessage = "Failed: No cipher text found - Expected format: \"cipherText\" in instruction"
-            return
-        }
-
-        try {
-            cipherText = decodeBase64Url(cipherTextBase64)
-        } catch (e: Exception) {
-            errorMessage = "Failed: Invalid cipher Base64URL - Cannot decode \"$cipherTextBase64\""
-            return
-        }
-
-        if (cipherText.isBlank()) {
-            errorMessage = "Failed: Decoded cipher text is empty"
-            return
-        }
-
-        shift = extractShift(instruction)
-        if (shift == null) {
-            errorMessage = "Failed: No shift value found - Expected format: shift=N in instruction"
-            return
-        }
-
-        try {
-            finalKey = caesarDecode(cipherText, shift!!)
-        } catch (e: Exception) {
-            errorMessage = "Failed: Caesar decode error - ${e.message}"
-            return
-        }
-
-        if (finalKey.isBlank()) {
-            errorMessage = "Final Result: Decoded key is empty"
+                is DoubleDecodeEvent.ComputingStarted -> {}
+                is DoubleDecodeEvent.ComputingFinished -> {}
+            }
         }
     }
 
@@ -119,64 +92,75 @@ fun DoubleDecodeScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // Đọc từ StateFlow: uiState.input
+        // Ghi qua ViewModel: viewModel.processInput(it)
         OutlinedTextField(
-            value = input,
-            onValueChange = { processInput(it) },
+            value = uiState.input,
+            onValueChange = { viewModel.processInput(it) },
             label = { Text("Enter Base64URL Input") },
             modifier = Modifier.fillMaxWidth()
         )
 
-        if (errorMessage.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = errorMessage,
-                color = MaterialTheme.colorScheme.error,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
+        // Hiển thị trạng thái lỗi, loading, success từ computingState
+        when (val state = uiState.computingState) {
+            is DoubleDecodeUiState.ComputingState.Error -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = state.message,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                )
+            }
+            is DoubleDecodeUiState.ComputingState.Loading -> {
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.material3.CircularProgressIndicator()
+            }
+            else -> {}
         }
 
-        // Show decode steps - display successful steps even if later steps fail
-        if (input.isNotBlank()) {
+        // Hiển thị các bước decode nếu có input và không phải đang loading/error
+        if (uiState.input.isNotBlank() && uiState.computingState !is DoubleDecodeUiState.ComputingState.Error) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (instruction.isNotEmpty()) {
+            // Bước 1: instruction sau decode lớp 1
+            if (uiState.instruction.isNotEmpty()) {
                 DecodeStepCard(
                     title = "Step 1: Intermediate Result (after decode)",
-                    content = instruction,
+                    content = uiState.instruction,
                     isIntermediate = true
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Step 2: Show if cipher text extraction was attempted
-            if (cipherTextBase64.isNotEmpty() || cipherText.isNotEmpty()) {
+            // Bước 2: decode cipherText
+            if (uiState.cipherTextBase64.isNotEmpty() || uiState.cipherText.isNotEmpty()) {
                 DecodeStepCard(
-                    title = if (cipherText.isNotEmpty()) "Step 2: Decode CipherText" else "Step 2: Decode CipherText",
-                    content = "Base64URL: \"$cipherTextBase64\"\n→ CipherText: \"$cipherText\"",
+                    title = "Step 2: Decode CipherText",
+                    content = "Base64URL: \"${uiState.cipherTextBase64}\"\n→ CipherText: \"${uiState.cipherText}\"",
                     isIntermediate = true
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Step 3: Show if shift was found
-            if (shift != null) {
+            // Bước 3: Caesar decode
+            if (uiState.shift != null) {
                 DecodeStepCard(
-                    title = if (finalKey.isNotEmpty()) "Step 3: Caesar Decode (shift=$shift)" else "Step 3: Caesar Decode (shift=$shift)",
-                    content = "\"$cipherText\" → \"$finalKey\"",
+                    title = "Step 3: Caesar Decode (shift=${uiState.shift})",
+                    content = "\"${uiState.cipherText}\" → \"${uiState.finalKey}\"",
                     isIntermediate = true
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Final Key: Show only if we have a decoded result
-            if (finalKey.isNotEmpty() && errorMessage.isEmpty()) {
+            // Kết quả cuối cùng: chỉ show khi Success
+            if (uiState.computingState is DoubleDecodeUiState.ComputingState.Success) {
                 Spacer(modifier = Modifier.height(8.dp))
-                FinalKeyCard(finalKey = finalKey)
+                FinalKeyCard(finalKey = (uiState.computingState as DoubleDecodeUiState.ComputingState.Success).key)
             }
-        } else if (errorMessage.isEmpty()) {
+        } else if (uiState.computingState !is DoubleDecodeUiState.ComputingState.Error) {
             Spacer(modifier = Modifier.height(32.dp))
             Text(
                 text = "Enter a Base64URL encoded string above to start decoding",
@@ -191,12 +175,8 @@ fun DoubleDecodeScreen() {
 
         Button(
             modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                val defaultInput = "QmFzZTY0VVJMLWRlY29kZSAiZVhodlptUngiIHRvIGdldCBjaXBoZXJU" +
-                        "ZXh0OyB0aGVuIENhZXNhci1kZWNvZGUgKHNoaWZ0PTMpIHRvIGdldCBL" +
-                        "RVk"
-                processInput(defaultInput)
-            },
+            // Gọi ViewModel method thay vì xử lý logic trong Composable
+            onClick = { viewModel.loadDefaultInput() },
             content = {
                 Text(
                     text = "Default Input",
@@ -205,5 +185,9 @@ fun DoubleDecodeScreen() {
                 )
             }
         )
+
+        // Snackbar host để hiển thị event từ SharedFlow
+        Spacer(modifier = Modifier.height(8.dp))
+        SnackbarHost(hostState = snackbarHostState)
     }
 }
